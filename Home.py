@@ -81,40 +81,90 @@ qtd_sinc, online = sincronizar_fila_se_online()
 fila_pendente = len(carregar_fila_offline())
 
 # ==================================================
-# 🔐 TELA DE LOGIN
+# 🔐 TELA DE LOGIN — APARÊNCIA MELHORADA
 # ==================================================
 if st.session_state.pagina == "login":
-    st.title("🔐 BACKLOGDAY — Sistema de Gestão de Manutenção")
-    st.subheader("Máquinas Florestais · Cabeçotes · Unidades de Corte")
+    # Centralizar conteúdo visualmente
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 2rem 2.5rem;
+        background: linear-gradient(135deg, #1e3a5f 0%, #2c5282 100%);
+        border-radius: 16px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    }
+    .login-title {
+        text-align: center;
+        color: #ffffff;
+        font-size: 28px;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .login-subtitle {
+        text-align: center;
+        color: #c7d2fe;
+        font-size: 14px;
+        margin-bottom: 24px;
+        opacity: 0.9;
+    }
+    .status-box {
+        border-radius: 10px;
+        padding: 10px 14px;
+        margin-bottom: 20px;
+        font-weight: 500;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-    # Status de conexão
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">🚜 BACKLOGDAY</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">Sistema de Gestão de Manutenção · Máquinas Florestais · Cabeçotes</div>', unsafe_allow_html=True)
+
+    # Status de Conexão — com visual colorido
     if online:
-        st.success("🌐 Sistema ONLINE — sincronização ativa")
+        st.markdown("""
+        <div class="status-box" style="background: #065f46; color: #d1fae5;">
+            🌐 <strong>Sistema Conectado — Sincronização Ativa</strong>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.warning("📡 Sistema OFFLINE — ordens serão sincronizadas quando conectar")
+        st.markdown("""
+        <div class="status-box" style="background: #92400e; color: #fef3c7;">
+            📡 <strong>Modo Offline — Ordens serão sincronizadas ao reconectar</strong>
+        </div>
+        """, unsafe_allow_html=True)
         if fila_pendente > 0:
-            st.info(f"⏳ {fila_pendente} ordem(ns) aguardando sincronização")
+            st.markdown(f"""
+            <div class="status-box" style="background: #1e40af; color: #dbeafe;">
+                ⏳ <strong>{fila_pendente} ordem(ns) aguardando sincronização</strong>
+            </div>
+            """, unsafe_allow_html=True)
 
     st.divider()
 
-    nome = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
+    # Campos de Login com visual melhorado
+    nome = st.text_input("👤 Usuário", placeholder="Digite seu nome de usuário")
+    senha = st.text_input("🔒 Senha", type="password", placeholder="Digite sua senha")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Entrar", type="primary"):
+    st.divider()
+
+    col_btn, _ = st.columns([2, 1])
+    with col_btn:
+        if st.button("🔑 Entrar no Sistema", type="primary", use_container_width=True):
             for u in usuarios:
                 if u["nome"] == nome and u["senha"] == senha:
                     st.session_state.usuario = u
                     st.session_state.pagina = "principal"
                     st.session_state.tela_selecionada = "listar"
-                    st.success(f"Bem-vindo, {u['nome']}! Perfil: {NIVEIS[u['nivel']]}")
+                    st.success(f"✅ Bem-vindo, {u['nome']}! Perfil: {NIVEIS[u['nivel']]}")
                     st.rerun()
                     break
             else:
-                st.error("Usuário ou senha inválidos!")
+                st.error("❌ Usuário ou senha inválidos! Verifique e tente novamente.")
 
-    st.divider()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
 # 🧭 PAINEL PRINCIPAL
