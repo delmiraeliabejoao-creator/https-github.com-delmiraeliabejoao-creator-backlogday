@@ -1,25 +1,100 @@
 import streamlit as st
+import json
+import os
+from datetime import datetime
 from banco import carregar_usuarios, salvar_usuarios, carregar_ordens, salvar_ordens
 from dados import MAQUINAS, CABECOTES, SISTEMAS_MAQUINA_BASE, SISTEMAS_CABECOTE, NIVEIS, STATUS
-from datetime import datetime
 
 st.set_page_config(page_title="BACKLOGDAY - Gestão de Manutenção", layout="wide")
 
-# Inicializar sessão
+# ==================================================
+# 📂 ARQUIVO LOCAL PARA ORDENS OFFLINE (FILA)
+# ==================================================
+ARQUIVO_FILA_OFFLINE = "fila_offline.json"
+
+def carregar_fila_offline():
+    """Carrega ordens que ficaram pendentes sem internet"""
+    if os.path.exists(ARQUIVO_FILA_OFFLINE):
+        with open(ARQUIVO_FILA_OFFLINE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def salvar_fila_offline(fila):
+    """Salva ordem na fila local"""
+    with open(ARQUIVO_FILA_OFFLINE, "w", encoding="utf-8") as f:
+        json.dump(fila, f, ensure_ascii=False, indent=2)
+
+def verificar_conexao():
+    """Simula verificação de conexão (no Streamlit Cloud = sempre online)"""
+    # Em ambiente online = True; offline = False
+    try:
+        import urllib.request
+        urllib.request.urlopen("https://streamlit.io", timeout=2)
+        return True
+    except:
+        return False
+
+def sincronizar_fila_se_online():
+    """Sincroniza automaticamente ordens da fila quando volta internet"""
+    if not verificar_conexao():
+        return 0, False  # Sem internet → não sincroniza
+
+    fila = carregar_fila_offline()
+    if not fila:
+        return 0, True  # Nada para sincronizar
+
+    ordens = carregar_ordens()
+    sincronizadas = 0
+
+    for ordem_off in fila:
+        novo_id = max([x["id"] for x in ordens], default=0) + 1
+        ordem_off["id"] = novo_id
+        ordem_off["sincronizada_em"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+        ordens.append(ordem_off)
+        sincronizadas += 1
+
+    if sincronizadas > 0:
+        salvar_ordens(ordens)
+        salvar_fila_offline([])  # Limpa fila após sincronizar
+        st.toast(f"✅ SINCRONIZADAS {sincronizadas} ORDENS!", icon="🌐")
+
+    return sincronizadas, True
+
+# ==================================================
+# 🔄 INICIALIZAR SESSÃO
+# ==================================================
 if "usuario" not in st.session_state:
     st.session_state.usuario = None
 if "pagina" not in st.session_state:
     st.session_state.pagina = "login"
 if "tela_selecionada" not in st.session_state:
     st.session_state.tela_selecionada = "listar"
+if "ultima_sincronia" not in st.session_state:
+    st.session_state.ultima_sincronia = None
 
+# Carregar dados
 usuarios = carregar_usuarios()
 ordens = carregar_ordens()
 
-# ------------------- TELA DE LOGIN -------------------
+# 🔄 TENTAR SINCRONIZAR AO ABRIR O SISTEMA
+qtd_sinc, online = sincronizar_fila_se_online()
+fila_pendente = len(carregar_fila_offline())
+
+# ==================================================
+# 🔐 TELA DE LOGIN
+# ==================================================
 if st.session_state.pagina == "login":
     st.title("🔐 BACKLOGDAY — Sistema de Gestão de Manutenção")
     st.subheader("Máquinas Florestais · Cabeçotes · Unidades de Corte")
+
+    # Status de conexão
+    if online:
+        st.success("🌐 Sistema ONLINE — sincronização ativa")
+    else:
+        st.warning("📡 Sistema OFFLINE — ordens serão sincronizadas quando conectar")
+        if fila_pendente > 0:
+            st.info(f"⏳ {fila_pendente} ordem(ns) aguardando sincronização")
+
     st.divider()
 
     nome = st.text_input("Usuário")
@@ -40,21 +115,35 @@ if st.session_state.pagina == "login":
                 st.error("Usuário ou senha inválidos!")
 
     st.divider()
-    
 
-# ------------------- PAINEL PRINCIPAL COM MENU DE ÍCONES -------------------
+# ==================================================
+# 🧭 PAINEL PRINCIPAL
+# ==================================================
 elif st.session_state.pagina == "principal" and st.session_state.usuario:
     u = st.session_state.usuario
-    st.title(f"🚜 BACKLOGDAY — Olá, {u['nome']} ({NIVEIS[u['nivel']]})")
+
+    # Cabeçalho com status de sincronização
+    col_titulo, col_status = st.columns([3, 1])
+    with col_titulo:
+        st.title(f"🚜 BACKLOGDAY — Olá, {u['nome']} ({NIVEIS[u['nivel']]})")
+    with col_status:
+        if online:
+            st.success("🌐 CONECTADO")
+            if qtd_sinc > 0:
+                st.info(f"✅ {qtd_sinc} sincronizada(s)")
+        else:
+            st.warning("📡 SEM CONEXÃO")
+            if fila_pendente > 0:
+                st.info(f"⏳ {fila_pendente} na fila")
+
     st.divider()
 
     # ==================================================
-    # 🧭 MENU PRINCIPAL — ÍCONES em GRADE (não lista)
+    # 📋 MENU DE ÍCONES
     # ==================================================
     st.subheader("📋 MENU PRINCIPAL")
     st.divider()
 
-    # Definir todos os botões com ícone e identificador
     botoes_menu = [
         ("📋", "Listar Ordens", "listar"),
         ("➕", "Abrir Ordem", "abrir"),
@@ -64,19 +153,13 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
         ("⚙️", "Cadastrar Usuário", "cadastrar"),
         ("📊", "Relatórios", "relatorios"),
     ]
-
-    # Excluir Ordem só aparece para ADMINISTRADOR
     if u["nivel"] == 9:
         botoes_menu.insert(6, ("🗑️", "Excluir Ordem", "excluir"))
-
-    # Sair sempre no final
     botoes_menu.append(("🚪", "Sair", "sair"))
 
-    # Exibir em grade — 3 colunas por linha
     cols = st.columns(3)
     for idx, (icone, label, tag) in enumerate(botoes_menu):
         with cols[idx % 3]:
-            # Botão destacado quando selecionado
             eh_ativo = st.session_state.tela_selecionada == tag
             tipo_botao = "primary" if eh_ativo else "secondary"
             if st.button(f"{icone}  {label}", type=tipo_botao, use_container_width=True):
@@ -85,9 +168,6 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
 
     st.divider()
 
-    # ==================================================
-    # 📄 CONTEÚDO — conforme tela selecionada
-    # ==================================================
     tela = st.session_state.tela_selecionada
 
     # 🚪 Sair
@@ -102,7 +182,21 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
     # ==================================================
     elif tela == "listar":
         st.subheader("📋 Lista de Ordens de Manutenção")
-        if not ordens:
+
+        fila = carregar_fila_offline()
+        if fila:
+            st.warning(f"⏳ {len(fila)} ORDEM(NS) AGUARDANDO CONEXÃO — será(ão) sincronizada(s) automaticamente")
+            for fo in fila:
+                st.markdown(f"""
+                ⏳ **Ordem temporária — {fo.get('categoria', '')}**
+                - Equipamento: {fo.get('equipamento', '')}
+                - Sistema/Item: {fo.get('sistema', '')} / {fo.get('item', '')}
+                - Solicitante: {fo.get('solicitante_nome', '')} | 📅 {fo.get('data_abertura', '')}
+                - **Status: AGUARDANDO CONEXÃO**
+                """)
+                st.divider()
+
+        if not ordens and not fila:
             st.info("Nenhuma ordem cadastrada.")
         else:
             for o in ordens:
@@ -117,13 +211,17 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
                 st.divider()
 
     # ==================================================
-    # ➕ ABRIR ORDEM
+    # ➕ ABRIR ORDEM — COM MODO OFFLINE
     # ==================================================
     elif tela == "abrir":
         if u["nivel"] not in [1, 2, 4, 5, 7, 8, 9]:
             st.error("Sem permissão para abrir ordens!")
         else:
             st.subheader("➕ Abrir Nova Ordem")
+
+            if not online:
+                st.warning("📡 MODO OFFLINE — Ordem será salva localmente e sincronizada automaticamente quando conectar à internet")
+
             st.divider()
 
             categoria = st.radio("**Selecione a Categoria:**", ["MÁQUINA", "CABEÇOTE"], horizontal=True)
@@ -154,9 +252,7 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
             st.divider()
 
             if st.button("✅ Abrir Ordem", type="primary", use_container_width=True):
-                novo_id = max([x["id"] for x in ordens], default=0) + 1
-                ordens.append({
-                    "id": novo_id,
+                dados_ordem = {
                     "categoria": categoria,
                     "titulo": titulo,
                     "descricao": descricao,
@@ -167,9 +263,23 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
                     "solicitante_id": u["id"],
                     "solicitante_nome": u["nome"],
                     "data_abertura": datetime.now().strftime("%d/%m/%Y %H:%M")
-                })
-                salvar_ordens(ordens)
-                st.success(f"✅ Ordem #{novo_id} aberta com sucesso!")
+                }
+
+                if online:
+                    # ✅ ONLINE — salva direto
+                    novo_id = max([x["id"] for x in ordens], default=0) + 1
+                    dados_ordem["id"] = novo_id
+                    ordens.append(dados_ordem)
+                    salvar_ordens(ordens)
+                    st.success(f"✅ Ordem #{novo_id} aberta com sucesso!")
+                else:
+                    # ⏳ OFFLINE — guarda na fila
+                    fila = carregar_fila_offline()
+                    dados_ordem["id_temporario"] = len(fila) + 1
+                    fila.append(dados_ordem)
+                    salvar_fila_offline(fila)
+                    st.success(f"⏳ Ordem salva LOCALMENTE! Será sincronizada automaticamente quando conectar à internet.")
+
                 st.info(f"Categoria: {categoria} | Equipamento: {equipamento}")
                 st.rerun()
 
@@ -179,6 +289,8 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
     elif tela == "assumir":
         if u["nivel"] != 2:
             st.error("Apenas Mecânicos podem assumir ordens!")
+        elif not online:
+            st.warning("📡 Sem conexão — não é possível atualizar ordens. Aguarde restabelecer a internet.")
         else:
             st.subheader("🔧 Assumir Ordem")
             ordens_abertas = [o for o in ordens if o["status"] == 1]
@@ -204,6 +316,8 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
     elif tela == "pecas":
         if u["nivel"] != 2:
             st.error("Apenas Mecânicos podem solicitar peças!")
+        elif not online:
+            st.warning("📡 Sem conexão — não é possível atualizar ordens. Aguarde restabelecer a internet.")
         else:
             st.subheader("📦 Solicitar Peças")
             ordens_em_andamento = [o for o in ordens if o["status"] == 2 and o.get("responsavel_nome") == u["nome"]]
@@ -228,35 +342,40 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
     # ✅ FINALIZAR ORDEM
     # ==================================================
     elif tela == "finalizar":
-        st.subheader("✅ Finalizar Ordem")
-        pode_todas = u["nivel"] in [8, 9]
-        if pode_todas:
-            ordens_finalizaveis = [o for o in ordens if o["status"] in [4, 5]]
+        if not online:
+            st.warning("📡 Sem conexão — não é possível atualizar ordens. Aguarde restabelecer a internet.")
         else:
-            ordens_finalizaveis = [o for o in ordens if o["status"] == 5 and o.get("responsavel_nome") == u["nome"]]
-        if not ordens_finalizaveis:
-            st.info("Nenhuma ordem para finalizar.")
-        else:
-            opcoes = [f"#{o['id']} — {o.get('categoria','')} — {o['equipamento']}" for o in ordens_finalizaveis]
-            id_escolhida = st.selectbox("Escolha a Ordem", opcoes)
-            id_num = int(id_escolhida.split("#")[1].split(" ")[0])
-            obs = st.text_area("Observações de Conclusão")
-            if st.button("✅ Concluir Ordem", type="primary"):
-                for o in ordens:
-                    if o["id"] == id_num:
-                        o["status"] = 6
-                        o["observacao_conclusao_supervisor"] = obs
-                        o["data_conclusao_supervisor"] = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        salvar_ordens(ordens)
-                        st.success(f"✅ Ordem #{id_num} CONCLUÍDA!")
-                        st.rerun()
+            st.subheader("✅ Finalizar Ordem")
+            pode_todas = u["nivel"] in [8, 9]
+            if pode_todas:
+                ordens_finalizaveis = [o for o in ordens if o["status"] in [4, 5]]
+            else:
+                ordens_finalizaveis = [o for o in ordens if o["status"] == 5 and o.get("responsavel_nome") == u["nome"]]
+            if not ordens_finalizaveis:
+                st.info("Nenhuma ordem para finalizar.")
+            else:
+                opcoes = [f"#{o['id']} — {o.get('categoria','')} — {o['equipamento']}" for o in ordens_finalizaveis]
+                id_escolhida = st.selectbox("Escolha a Ordem", opcoes)
+                id_num = int(id_escolhida.split("#")[1].split(" ")[0])
+                obs = st.text_area("Observações de Conclusão")
+                if st.button("✅ Concluir Ordem", type="primary"):
+                    for o in ordens:
+                        if o["id"] == id_num:
+                            o["status"] = 6
+                            o["observacao_conclusao_supervisor"] = obs
+                            o["data_conclusao_supervisor"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+                            salvar_ordens(ordens)
+                            st.success(f"✅ Ordem #{id_num} CONCLUÍDA!")
+                            st.rerun()
 
     # ==================================================
-    # 🗑️ EXCLUIR ORDEM — SÓ ADMINISTRADOR
+    # 🗑️ EXCLUIR ORDEM
     # ==================================================
     elif tela == "excluir":
         if u["nivel"] != 9:
             st.error("❌ Apenas ADMINISTRADOR pode excluir ordens!")
+        elif not online:
+            st.warning("📡 Sem conexão — não é possível excluir ordens. Aguarde restabelecer a internet.")
         else:
             st.subheader("🗑️ Excluir Ordem — Rápido")
             st.warning("⚠️ ATENÇÃO: A ordem será APAGADA DEFINITIVAMENTE!")
@@ -320,6 +439,8 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
     elif tela == "cadastrar":
         if u["nivel"] != 9:
             st.error("Apenas ADMINISTRADOR pode cadastrar usuários!")
+        elif not online:
+            st.warning("📡 Sem conexão — não é possível cadastrar usuários. Aguarde restabelecer a internet.")
         else:
             st.subheader("⚙️ Cadastrar Novo Usuário")
             nome_novo = st.text_input("Nome do Usuário")
@@ -343,6 +464,10 @@ elif st.session_state.pagina == "principal" and st.session_state.usuario:
     elif tela == "relatorios":
         st.subheader("📊 Relatório Geral")
         st.write(f"**Total de Ordens:** {len(ordens)}")
+
+        fila = carregar_fila_offline()
+        if fila:
+            st.write(f"⏳ **Aguardando Conexão:** {len(fila)} ordem(ns)")
 
         st.divider()
         st.subheader("Por Categoria")
