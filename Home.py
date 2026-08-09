@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 from banco import carregar_usuarios, salvar_usuarios, carregar_ordens, salvar_ordens
 from dados import MAQUINAS, CABECOTES, SISTEMAS_MAQUINA_BASE, SISTEMAS_CABECOTE, NIVEIS, STATUS
 from datetime import datetime
@@ -40,7 +40,7 @@ if st.session_state.pagina == "login":
                 st.error("Usuário ou senha inválidos!")
 
     st.divider()
-    st.info("🔑 Acesso padrão: Usuário: adm | Senha: adm123")
+    
 
 # ------------------- PAINEL PRINCIPAL COM MENU DE ÍCONES -------------------
 elif st.session_state.pagina == "principal" and st.session_state.usuario:
